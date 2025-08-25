@@ -3,6 +3,12 @@
 # chmodx - Set file permissions using a familiar 10-character mode string (e.g., '-rwxr-x---').
 # POSIX shell-compatible utility for Linux, macOS, and other Unix-like systems.
 #
+# Repository: https://github.com/ismdevteam/chmodx
+# Author: ismdevteam
+# License: MIT
+# 
+# Description: A shell script utility for setting file permissions using a human-readable mode string.
+#
 # Usage: chmodx [--verbose] MODE FILE...
 #   MODE: A 10-character string: <type><user><group><other>
 #         - type: '-' for regular files, 'd' for directories.
@@ -11,6 +17,7 @@
 # Example:
 #   chmodx -rwxr-x--- /path/to/file
 #   chmodx --verbose drwxr-xr-x /path/to/dir
+
 
 # Print an error message to stderr and exit with a given (or default) status.
 err() {
