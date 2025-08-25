@@ -1,0 +1,149 @@
+#!/bin/sh
+#
+# chmodx - Set file permissions using a familiar 10-character mode string (e.g., '-rwxr-x---').
+# POSIX shell-compatible utility for Linux, macOS, and other Unix-like systems.
+#
+# Usage: chmodx [--verbose] MODE FILE...
+#   MODE: A 10-character string: <type><user><group><other>
+#         - type: '-' for regular files, 'd' for directories.
+#         - user/group/other: Each is a 3-character sequence of 'r', 'w', 'x', or '-'.
+#
+# Example:
+#   chmodx -rwxr-x--- /path/to/file
+#   chmodx --verbose drwxr-xr-x /path/to/dir
+
+# Print an error message to stderr and exit with a given (or default) status.
+err() {
+    printf '%s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+# Display usage information and exit.
+usage() {
+    printf '%s\n' "Usage: $0 [--verbose] MODE FILE..."
+    printf '%s\n' "MODE must be 10 characters: <type><user><group><other>"
+    printf '%s\n' "  type: '-' for file, 'd' for directory"
+    printf '%s\n' "  user, group, other: triplets of 'r', 'w', 'x', '-' (e.g., 'rwx', 'r--')"
+    exit 2
+}
+
+# -- Parse Command-Line Arguments --
+
+# Check for the optional --verbose flag
+verbose=
+if [ "$1" = "--verbose" ]; then
+    verbose=1
+    shift
+fi
+
+# Ensure at least a mode and one file argument are provided
+[ $# -ge 2 ] || usage
+mode=$1
+shift
+
+# -- Validate the Mode String --
+
+# Check the mode string is exactly 10 characters long
+case "${#mode}" in
+    10) ;;
+    *) err "Error: MODE must be exactly 10 characters. See usage." 2 ;;
+esac
+
+# Extract the type indicator and the permission string
+typechar=$(printf '%s' "$mode" | cut -c1)
+permstr=$(printf '%s' "$mode" | cut -c2-10)
+
+# Validate the type character (must be '-' or 'd')
+case "$typechar" in
+    -|d) ;;
+    *) err "Error: First character of MODE must be '-' (file) or 'd' (directory)." 2 ;;
+esac
+
+# Validate the permission string (must be 9 characters from the set [rwx-])
+case "$permstr" in
+    [rwx-][rwx-][rwx-][rwx-][rwx-][rwx-][rwx-][rwx-][rwx-]) ;;
+    *) err "Error: Permissions must be 9 characters, each being 'r', 'w', 'x', or '-'." 2 ;;
+esac
+
+# -- Conversion Function: Symbolic -> Octal --
+
+# Converts a 3-character symbolic permission chunk (e.g., 'rw-') to its octal equivalent.
+# Arguments:
+#   $1 - A 3-character string (e.g., 'r--')
+# Returns:
+#   Prints the calculated octal digit (0-7)
+chunk_to_oct() {
+    chunk=$1
+    val=0
+    # Check for read permission
+    [ "$(printf '%s' "$chunk" | cut -c1)" = "r" ] && val=$((val + 4))
+    # Check for write permission
+    [ "$(printf '%s' "$chunk" | cut -c2)" = "w" ] && val=$((val + 2))
+    # Check for execute permission
+    [ "$(printf '%s' "$chunk" | cut -c3)" = "x" ] && val=$((val + 1))
+    printf '%d' "$val"
+}
+
+# Convert the 9-char permission string into a 3-digit octal mode
+a=$(chunk_to_oct "$(printf '%s' "$permstr" | cut -c1-3)") # User
+b=$(chunk_to_oct "$(printf '%s' "$permstr" | cut -c4-6)") # Group
+c=$(chunk_to_oct "$(printf '%s' "$permstr" | cut -c7-9)") # Other
+octmode="${a}${b}${c}"
+
+# -- Main Loop: Process Files --
+
+status=0 # Exit status; will be changed on error
+
+for file in "$@"; do
+    # Check if the target exists
+    if [ ! -e "$file" ]; then
+        printf 'chmodx: %s: No such file or directory\n' "$file" >&2
+        status=2
+        continue
+    fi
+
+    # Validate file type against the requested mode
+    if [ "$typechar" = "-" ]; then
+        # Mode indicates a file, so target must NOT be a directory
+        if [ -d "$file" ]; then
+            printf 'chmodx: %s: Mode specifies a file (-), but target is a directory.\n' "$file" >&2
+            status=2
+            continue
+        fi
+    else
+        # Mode indicates a directory, so target must BE a directory
+        if [ ! -d "$file" ]; then
+            printf 'chmodx: %s: Mode specifies a directory (d), but target is not a directory.\n' "$file" >&2
+            status=2
+            continue
+        fi
+    fi
+
+    # Apply the permissions using the calculated octal mode
+    if chmod "$octmode" "$file" 2>/dev/null; then
+        : # Permission change succeeded, do nothing
+    else
+        # If chmod fails, report the error
+        printf 'chmodx: %s: Failed to change permissions.\n' "$file" >&2
+        status=3
+        continue
+    fi
+
+    # If verbose mode is enabled, show the result and a reproducible command
+    if [ -n "$verbose" ]; then
+        # Use `ls -ld` to show the new permissions without listing directory contents
+        if ls -ld -- "$file" >/dev/null 2>&1; then
+            ls -ld -- "$file"
+        else
+            # Fallback for systems that don't support '--'
+            ls -ld "$file"
+        fi
+
+        # Print commands that can be used to reproduce this permission change
+        # The filename is escaped for safety in shell commands.
+        printf 'Reproduce with:\n'
+        printf '  chmod %s %s\n' "$octmode" "$(printf '%s' "$file" | sed "s/'/'\\\\''/g; s/^/'/; s/\$/'/")"
+    fi
+done
+
+exit $status
